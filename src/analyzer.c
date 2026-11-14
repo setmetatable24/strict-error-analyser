@@ -58,10 +58,47 @@ void diagnostic_list_add(
     d->is_error = is_error_code(code);
 }
 
+static bool parse_gnu_header(
+    const char *line,
+    char *out_path,
+    size_t path_cap,
+    int *out_l,
+    int *out_c,
+    int *out_el,
+    int *out_ec,
+    char *out_code,
+    size_t code_cap,
+    const char **out_msg
+) {
+    const char *scan = line;
+    while ((scan = strchr(scan, ':')) != NULL) {
+        int l = 0, c = 0, el = 0, ec = 0;
+        char code[128] = {0};
+        int consumed = 0;
+        if (sscanf(scan, ":%d.%d-%d.%d: %127[A-Za-z0-9_]: %n", &l, &c, &el, &ec, code, &consumed) == 5 && consumed > 0) {
+            size_t raw_path_len = (size_t)(scan - line);
+            if (raw_path_len >= path_cap) raw_path_len = path_cap - 1;
+            memcpy(out_path, line, raw_path_len);
+            out_path[raw_path_len] = '\0';
+
+            *out_l = l;
+            *out_c = c;
+            *out_el = el;
+            *out_ec = ec;
+            snprintf(out_code, code_cap, "%s", code);
+            *out_msg = scan + consumed;
+            return true;
+        }
+        scan++;
+    }
+    return false;
+}
+
 void parse_gnu_output(const char *output, const PathMap *pm, DiagnosticList *dl) {
     if (!output) return;
     const char *p = output;
-    char line_buf[2048];
+    char line_buf[4096];
+    bool has_current = false;
 
     while (*p) {
         const char *next_nl = strchr(p, '\n');
@@ -72,25 +109,53 @@ void parse_gnu_output(const char *output, const PathMap *pm, DiagnosticList *dl)
         if (len > 0 && line_buf[len - 1] == '\r') line_buf[len - 1] = '\0';
         p = next_nl ? next_nl + 1 : p + len;
 
-        if (strncmp(line_buf, "[INFO]", 6) == 0 || strlen(line_buf) == 0) continue;
+        if (strncmp(line_buf, "[INFO]", 6) == 0 || strncmp(line_buf, "[WARN]", 6) == 0) {
+            continue;
+        }
+
+        const char *trimmed = line_buf;
+        while (*trimmed == ' ' || *trimmed == '\t') trimmed++;
+        if (*trimmed == '\0') continue;
 
         char path[1024] = {0};
         int l = 0, c = 0, el = 0, ec = 0;
         char code[128] = {0};
+        const char *msg = NULL;
 
-        char *colon1 = strrchr(line_buf, ':');
-        if (!colon1) continue;
-
-        int matched = sscanf(line_buf, "%1023[^:]:%d.%d-%d.%d: %127[^:]: ", path, &l, &c, &el, &ec, code);
-        if (matched == 6) {
-            char *msg = strstr(line_buf, code);
-            if (msg) {
-                msg += strlen(code);
-                if (*msg == ':') msg++;
-                while (*msg == ' ') msg++;
-                const char *mapped = path_map_lookup(pm, path);
-                diagnostic_list_add(dl, mapped, l, c, el, ec, code, msg);
+        if (parse_gnu_header(line_buf, path, sizeof(path), &l, &c, &el, &ec, code, sizeof(code), &msg)) {
+            char dm_fallback[1024] = {0};
+            size_t plen = strlen(path);
+            if (plen > 0 && path[plen - 1] == ']') {
+                char *bracket = strstr(path, " [");
+                if (bracket) {
+                    *bracket = '\0';
+                    char *tag = bracket + 2;
+                    size_t tlen = strlen(tag);
+                    if (tlen > 0 && tag[tlen - 1] == ']') {
+                        tag[tlen - 1] = '\0';
+                    }
+                    snprintf(dm_fallback, sizeof(dm_fallback), "%s", tag);
+                    for (char *q = dm_fallback; *q; ++q) {
+                        if (*q == '/') *q = '.';
+                    }
+                }
             }
+
+            const char *mapped = path_map_lookup(pm, path);
+            if (mapped == path && dm_fallback[0] != '\0') {
+                mapped = dm_fallback;
+            }
+            diagnostic_list_add(dl, mapped, l, c, el, ec, code, msg ? msg : "");
+            has_current = true;
+        } else if (has_current && dl->count > 0) {
+            Diagnostic *cur = &dl->items[dl->count - 1];
+            Buffer mb;
+            buffer_init(&mb);
+            buffer_append_str(&mb, cur->message);
+            buffer_append_str(&mb, "\n  ");
+            buffer_append_str(&mb, trimmed);
+            free(cur->message);
+            cur->message = mb.data;
         }
     }
 }
