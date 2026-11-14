@@ -22,6 +22,32 @@ typedef struct {
     char *global_types;
 } Options;
 
+static void print_json_escaped(const char *s) {
+    putchar('"');
+    if (s) {
+        for (const char *p = s; *p; ++p) {
+            unsigned char c = (unsigned char)*p;
+            switch (c) {
+                case '"': fputs("\\\"", stdout); break;
+                case '\\': fputs("\\\\", stdout); break;
+                case '\b': fputs("\\b", stdout); break;
+                case '\f': fputs("\\f", stdout); break;
+                case '\n': fputs("\\n", stdout); break;
+                case '\r': fputs("\\r", stdout); break;
+                case '\t': fputs("\\t", stdout); break;
+                default:
+                    if (c < 0x20) {
+                        printf("\\u%04x", c);
+                    } else {
+                        putchar((int)c);
+                    }
+                    break;
+            }
+        }
+    }
+    putchar('"');
+}
+
 static void print_usage(const char *prog) {
     printf("usage: %s [options]\n\n", prog ? prog : "strict-error-analyser");
     printf("Analyze exported Roblox Studio DataModel using luau-lsp.\n\n");
@@ -198,8 +224,13 @@ int main(int argc, char **argv) {
             if (opt.errors_only && !d->is_error) continue;
             if (!first) printf(",\n");
             first = false;
-            printf("    {\n      \"script\": \"%s\",\n      \"line\": %d,\n      \"col\": %d,\n      \"code\": \"%s\",\n      \"message\": \"%s\",\n      \"isError\": %s\n    }",
-                   d->script, d->line, d->col, d->code, d->message, d->is_error ? "true" : "false");
+            printf("    {\n      \"script\": ");
+            print_json_escaped(d->script);
+            printf(",\n      \"line\": %d,\n      \"col\": %d,\n      \"code\": ", d->line, d->col);
+            print_json_escaped(d->code);
+            printf(",\n      \"message\": ");
+            print_json_escaped(d->message);
+            printf(",\n      \"isError\": %s\n    }", d->is_error ? "true" : "false");
         }
         printf("\n  ]\n}\n");
     } else {
