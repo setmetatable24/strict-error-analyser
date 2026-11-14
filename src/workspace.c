@@ -38,10 +38,34 @@ void path_map_add(PathMap *pm, const char *disk, const char *dm) {
     pm->count++;
 }
 
+static bool match_normalized_suffix(const char *haystack, const char *needle) {
+    if (!haystack || !needle || !*needle) return false;
+    size_t h_len = strlen(haystack);
+    size_t n_len = strlen(needle);
+    if (h_len < n_len) return false;
+    for (size_t start = 0; start <= h_len - n_len; ++start) {
+        bool ok = true;
+        for (size_t j = 0; j < n_len; ++j) {
+            char a = haystack[start + j];
+            char b = needle[j];
+            if (a == '\\') a = '/';
+            if (b == '\\') b = '/';
+            if (a >= 'A' && a <= 'Z') a = (char)(a - 'A' + 'a');
+            if (b >= 'A' && b <= 'Z') b = (char)(b - 'A' + 'a');
+            if (a != b) {
+                ok = false;
+                break;
+            }
+        }
+        if (ok) return true;
+    }
+    return false;
+}
+
 const char *path_map_lookup(const PathMap *pm, const char *haystack) {
     if (!pm || !haystack) return haystack;
     for (size_t i = 0; i < pm->count; ++i) {
-        if (strstr(haystack, pm->entries[i].disk_path) != NULL) {
+        if (match_normalized_suffix(haystack, pm->entries[i].disk_path)) {
             return pm->entries[i].dm_path;
         }
     }
